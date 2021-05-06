@@ -130,17 +130,17 @@ impl<R: Read> EndianReader<R> {
     }
 
     /// Gets a reference to the underlying reader of this byte reader.
-     ///
-     /// # Examples
-     ///
-     /// ```
-     /// use std::io::Cursor;
-     /// use byte_order::EndianReader;
-     ///
-     /// let reader = EndianReader::new(Cursor::new(vec![]));
-     ///
-     /// let cursor_reference = reader.get_ref();
-     /// ```
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Cursor;
+    /// use byte_order::EndianReader;
+    ///
+    /// let reader = EndianReader::new(Cursor::new(vec![]));
+    ///
+    /// let cursor_reference = reader.get_ref();
+    /// ```
     #[inline]
     pub fn get_ref(&self) -> &R {
         &self.inner
