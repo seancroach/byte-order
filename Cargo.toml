@@ -1,0 +1,15 @@
+[package]
+name = "byte-order"
+version = "0.1.0"
+authors = ["Sean C. Roach <me@seancroach.dev>"]
+edition = "2018"
+
+description = "Rust library for reading and writing numbers in big-endian and little-endian."
+repository = "https://github.com/seancroach/byte-order"
+license = "MIT"
+
+[lib]
+name = "byte_order"
+
+[dependencies]
+docgen = "0.1.2"
