@@ -1,6 +1,6 @@
 [package]
 name = "byte-order"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Sean C. Roach <me@seancroach.dev>"]
 edition = "2018"
 
