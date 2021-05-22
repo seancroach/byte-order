@@ -629,3 +629,9 @@ impl<R: Read> NumberReader<R> {
         })
     }
 }
+
+impl<R: Read> Read for NumberReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}

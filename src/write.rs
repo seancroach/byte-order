@@ -577,3 +577,13 @@ impl<W: Write> NumberWriter<W> {
         self.inner.write_all(&bytes)
     }
 }
+
+impl<W: Write> Write for NumberWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.inner.flush()
+    }
+}
