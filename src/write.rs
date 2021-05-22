@@ -1,220 +1,579 @@
 use std::io::{Result, Write};
 
-use crate::Endianness;
+use crate::order::ByteOrder;
 
-macro_rules! write_method {
-    ($name:ident, $Ty:ty, $value:expr, $be_vec:expr, $le_vec:expr) => {
-        doc!(
-            concat!("Writes a [`", stringify!($Ty), "`] value to the")
-            "underlying writer."
-            ""
-            "# Errors"
-            ""
-            "This method returns the same errors as [`Write::write_all`]."
-            ""
-            "# Examples"
-            ""
-            "```"
-            "use byte_order::{Endianness, EndianWriter};"
-            ""
-            "let mut be_writer = EndianWriter::with_order(Endianness::BE, Vec::new());"
-            concat!("be_writer.", stringify!($name), "(", stringify!($value), stringify!($Ty), ").unwrap();")
-            ""
-            concat!("assert_eq!(be_writer.into_inner(), ", stringify!($be_vec), ");")
-            "```"
-            ""
-            "```"
-            "use byte_order::{Endianness, EndianWriter};"
-            ""
-            "let mut le_writer = EndianWriter::with_order(Endianness::LE, Vec::new());"
-            concat!("le_writer.", stringify!($name), "(", stringify!($value), stringify!($Ty), ").unwrap();")
-            ""
-            concat!("assert_eq!(le_writer.into_inner(), ", stringify!($le_vec), ");")
-            "```";
-            #[inline]
-            pub fn $name(&mut self, value: $Ty) -> Result<()> {
-                let buf = match self.order {
-                    Endianness::BE => value.to_be_bytes(),
-                    Endianness::LE => value.to_le_bytes(),
-                };
-                self.inner.write_all(&buf)
-            }
-        );
-    };
-}
-
-macro_rules! write_method_pair {
-    (
-        $unsigned_name:ident,
-        $U:ty,
-        $signed_name:ident,
-        $S:ty,
-        $value:expr,
-        $be_vec: expr,
-        $le_vec:expr
-    ) => {
-        write_method!($unsigned_name, $U, $value, $be_vec, $le_vec);
-        write_method!($signed_name, $S, $value, $be_vec, $le_vec);
-    };
-}
-
-/// An `EndianWriter` wraps some [writer](Write) and provides it methods to
-/// write integers in some defined endianness.
-pub struct EndianWriter<W: Write> {
+/// A `NumberWriter` wraps a [writer] and provides methods for writing numbers.
+///
+/// Unlike many libraries, which take byte order as a parameter per operation, a
+/// `NumberWriter` takes byte order as a parameter upon initialization.
+///
+/// # Examples
+///
+/// We can create a new `NumberWriter` using the target endianness using
+/// [`NumberWriter::new`]:
+///
+/// ```
+/// use byte_order::NumberWriter;
+///
+/// let mut writer = NumberWriter::new(vec![]);
+/// ```
+///
+/// Or, to write numbers with a certain endianness, we can create `NumberWriter`
+/// structures using [`NumberWriter::with_order`]:
+///
+/// ```
+/// use byte_order::{ByteOrder, NumberWriter};
+///
+/// let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+/// let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+/// let mut ne_writer = NumberWriter::with_order(ByteOrder::NE, vec![]);
+/// ```
+///
+/// To write numbers from the underlying [writer], use any of the `write_*`
+/// methods that are provided:
+///
+/// ```
+/// use std::io;
+/// use byte_order::{ByteOrder, NumberWriter};
+///
+/// fn main() -> io::Result<()> {
+///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+///     be_writer.write_u16(0xA1B2)?;
+///     assert_eq!(be_writer.into_inner(), vec![0xA1, 0xB2]);
+///
+///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+///     le_writer.write_u16(0xA1B2)?;
+///     assert_eq!(le_writer.into_inner(), vec![0xB2, 0xA1]);
+///
+///     let mut ne_writer = NumberWriter::with_order(ByteOrder::NE, vec![]);
+///     ne_writer.write_u16(0xA1B2)?;
+///     assert_eq!(
+///         ne_writer.into_inner(),
+///         if cfg!(target_endian = "big") {
+///             vec![0xA1, 0xB2]
+///         } else {
+///             vec![0xB2, 0xA1]
+///         }
+///     );
+///
+///     Ok(())
+/// }
+/// ```
+///
+/// [writer]: https://doc.rust-lang.org/std/io/trait.Write.html
+/// [`NumberWriter::new`]: NumberWriter::new
+/// [`NumberWriter::with_order`]: NumberWriter::with_order
+pub struct NumberWriter<W: Write> {
     inner: W,
-    order: Endianness,
+    order: ByteOrder,
 }
 
-impl<W: Write> EndianWriter<W> {
-    /// Creates a new byte writer wrapping the provided writer. Endianness is
-    /// derived from native byte order.
-    ///
-    /// Since the target platform's endianness is used, portable code should use
-    /// [`EndianWriter::with_order`], as appropriate.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use byte_order::EndianWriter;
-    ///
-    /// let writer = EndianWriter::new(Vec::new());
-    /// ```
+impl<W: Write> NumberWriter<W> {
     #[inline]
-    pub fn new(writer: W) -> EndianWriter<W> {
-        let order = if cfg!(target_endian = "big") {
-            Endianness::BE
-        } else {
-            Endianness::LE
-        };
-        EndianWriter::with_order(order, writer)
+    pub fn new(w: W) -> NumberWriter<W> {
+        NumberWriter::with_order(ByteOrder::NE, w)
     }
 
-    /// Creates a new endian writer wrapping the provided writer. An order is
-    /// also required, either [`Endianness::BE`] for big-endian or
-    /// [`Endianness::LE`] for little-endian byte ordering.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use byte_order::{Endianness, EndianWriter};
-    ///
-    /// let be_writer = EndianWriter::with_order(Endianness::BE, Vec::new());
-    /// let le_writer = EndianWriter::with_order(Endianness::LE, Vec::new());
-    /// ```
     #[inline]
-    pub fn with_order(order: Endianness, writer: W) -> EndianWriter<W> {
-        EndianWriter {
-            inner: writer,
-            order,
-        }
+    pub fn with_order(order: ByteOrder, w: W) -> NumberWriter<W> {
+        NumberWriter { inner: w, order }
     }
 
-    /// Consumes this byte writer, returning the underlying writer.
+    /// Consumes this `NumberReader`, returning the underlying value.
     ///
     /// # Examples
     ///
     /// ```
-    /// use byte_order::EndianWriter;
+    /// use std::io::Cursor;
+    /// use byte_order::NumberReader;
     ///
-    /// let writer = EndianWriter::new(Vec::new());
+    /// let reader = NumberReader::new(Cursor::new(vec![]));
     ///
-    /// let vec = writer.into_inner();
+    /// let cursor = reader.into_inner();
     /// ```
-    #[inline]
     pub fn into_inner(self) -> W {
         self.inner
     }
 
-    /// Gets a reference to the underlying writer of this byte writer.
+    /// Gets a reference to the underlying value in this `NumberReader`.
     ///
     /// # Examples
     ///
     /// ```
-    /// use byte_order::EndianWriter;
+    /// use std::io::Cursor;
+    /// use byte_order::NumberReader;
     ///
-    /// let writer = EndianWriter::new(Vec::new());
+    /// let reader = NumberReader::new(Cursor::new(vec![]));
     ///
-    /// let vec_reference = writer.get_ref();
+    /// let reference = reader.get_ref();
     /// ```
-    #[inline]
     pub fn get_ref(&self) -> &W {
         &self.inner
     }
 
-    /// Gets a mutable reference to the underlying writer of this byte writer.
+    /// Gets a mutable reference to the underlying value in this `NumberReader`.
     ///
-    /// Care should be taken to avoid modifying the internal I/O state of the
-    /// underlying writer as it may corrupt reading and writing numbers.
+    /// # Examples
     ///
     /// ```
-    /// use byte_order::EndianWriter;
+    /// use std::io::Cursor;
+    /// use byte_order::NumberReader;
     ///
-    /// let mut writer = EndianWriter::new(Vec::new());
+    /// let mut reader = NumberReader::new(Cursor::new(vec![]));
     ///
-    /// let vec_reference = writer.get_mut();
+    /// let reference = reader.get_mut();
     /// ```
-    #[inline]
     pub fn get_mut(&mut self) -> &mut W {
         &mut self.inner
     }
 
-    write_method_pair!(write_u8, u8, write_i8, i8, 0x12, vec![0x12], vec![0x12]);
-
-    write_method_pair!(
-        write_u16,
-        u16,
-        write_i16,
-        i16,
-        0x1234,
-        vec![0x12, 0x34],
-        vec![0x34, 0x12]
-    );
-
-    write_method_pair!(
-        write_u32,
-        u32,
-        write_i32,
-        i32,
-        0x12345678,
-        vec![0x12, 0x34, 0x56, 0x78],
-        vec![0x78, 0x56, 0x34, 0x12]
-    );
-
-    write_method_pair!(
-        write_u64,
-        u64,
-        write_i64,
-        i64,
-        0x1234567890123456,
-        vec![0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56],
-        vec![0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12]
-    );
-
-    write_method_pair!(
-        write_u128,
-        u128,
-        write_i128,
-        i128,
-        0x12345678901234567890123456789012,
-        vec![
-            0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56, 0x78,
-            0x90, 0x12
-        ],
-        vec![
-            0x12, 0x90, 0x78, 0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12, 0x90, 0x78, 0x56,
-            0x34, 0x12
-        ]
-    );
-}
-
-impl<W: Write> Write for EndianWriter<W> {
+    /// Writes an unsigned 8-bit integer to the underlying writer.
+    ///
+    /// **Note:** Since this method reads a single byte, no byte order
+    /// conversions are used. It is included for completeness.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::NumberWriter;
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let mut writer = NumberWriter::new(vec![]);
+    ///     writer.write_u8(0x12u8)?;
+    ///     assert_eq!(writer.into_inner(), vec![0x12]);
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
     #[inline]
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        self.inner.write(buf)
+    pub fn write_u8(&mut self, n: u8) -> Result<()> {
+        self.inner.write_all(&[n])
     }
 
+    /// Writes an signed 8-bit integer to the underlying writer.
+    ///
+    /// **Note:** Since this method reads a single byte, no byte order
+    /// conversions are used. It is included for completeness.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::NumberWriter;
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let mut writer = NumberWriter::new(vec![]);
+    ///     writer.write_u8(0x12u8)?;
+    ///     assert_eq!(writer.into_inner(), vec![0x12]);
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
     #[inline]
-    fn flush(&mut self) -> Result<()> {
-        self.inner.flush()
+    pub fn write_i8(&mut self, n: i8) -> Result<()> {
+        self.write_u8(n as u8)
+    }
+
+    /// Writes an unsigned 16-bit integer to the underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 0x1234u16;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_u16(n)?;
+    ///     assert_eq!(be_writer.into_inner(), vec![0x12, 0x34]);
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_u16(n)?;
+    ///     assert_eq!(le_writer.into_inner(), vec![0x34, 0x12]);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_u16(&mut self, n: u16) -> Result<()> {
+        let bytes = match self.order {
+            ByteOrder::BE => n.to_be_bytes(),
+            ByteOrder::LE => n.to_le_bytes(),
+        };
+        self.inner.write_all(&bytes)
+    }
+
+    /// Writes a signed 16-bit integer to the underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 0x1234i16;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_i16(n)?;
+    ///     assert_eq!(be_writer.into_inner(), vec![0x12, 0x34]);
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_i16(n)?;
+    ///     assert_eq!(le_writer.into_inner(), vec![0x34, 0x12]);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_i16(&mut self, n: i16) -> Result<()> {
+        self.write_u16(n as u16)
+    }
+
+    /// Writes an unsigned 32-bit integer to the underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 0x12345678u32;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_u32(n)?;
+    ///     assert_eq!(be_writer.into_inner(), vec![0x12, 0x34, 0x56, 0x78]);
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_u32(n)?;
+    ///     assert_eq!(le_writer.into_inner(), vec![0x78, 0x56, 0x34, 0x12]);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_u32(&mut self, n: u32) -> Result<()> {
+        let bytes = match self.order {
+            ByteOrder::BE => n.to_be_bytes(),
+            ByteOrder::LE => n.to_le_bytes(),
+        };
+        self.inner.write_all(&bytes)
+    }
+
+    /// Writes a signed 32-bit integer to the underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 0x12345678i32;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_i32(n)?;
+    ///     assert_eq!(be_writer.into_inner(), vec![0x12, 0x34, 0x56, 0x78]);
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_i32(n)?;
+    ///     assert_eq!(le_writer.into_inner(), vec![0x78, 0x56, 0x34, 0x12]);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_i32(&mut self, n: i32) -> Result<()> {
+        self.write_u32(n as u32)
+    }
+
+    /// Writes an unsigned 64-bit integer to the underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 0x1234567890123456u64;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_u64(n)?;
+    ///     assert_eq!(be_writer.into_inner(), vec![0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56]);
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_u64(n)?;
+    ///     assert_eq!(le_writer.into_inner(), vec![0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12]);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_u64(&mut self, n: u64) -> Result<()> {
+        let bytes = match self.order {
+            ByteOrder::BE => n.to_be_bytes(),
+            ByteOrder::LE => n.to_le_bytes(),
+        };
+        self.inner.write_all(&bytes)
+    }
+
+    /// Writes a signed 64-bit integer to the underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 0x1234567890123456i64;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_i64(n)?;
+    ///     assert_eq!(be_writer.into_inner(), vec![0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56]);
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_i64(n)?;
+    ///     assert_eq!(le_writer.into_inner(), vec![0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12]);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_i64(&mut self, n: i64) -> Result<()> {
+        self.write_u64(n as u64)
+    }
+
+    /// Writes an unsigned 128-bit integer to the underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 0x12345678901234567890123456789012u128;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_u128(n)?;
+    ///     assert_eq!(
+    ///         be_writer.into_inner(),
+    ///         vec![
+    ///             0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56,
+    ///             0x78, 0x90, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12,
+    ///         ]
+    ///     );
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_u128(n)?;
+    ///     assert_eq!(
+    ///         le_writer.into_inner(),
+    ///         vec![
+    ///             0x12, 0x90, 0x78, 0x56, 0x34, 0x12, 0x90, 0x78,
+    ///             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12
+    ///         ]
+    ///     );
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_u128(&mut self, n: u128) -> Result<()> {
+        let bytes = match self.order {
+            ByteOrder::BE => n.to_be_bytes(),
+            ByteOrder::LE => n.to_le_bytes(),
+        };
+        self.inner.write_all(&bytes)
+    }
+
+    /// Writes a signed 128-bit integer to the underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 0x12345678901234567890123456789012i128;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_i128(n)?;
+    ///     assert_eq!(
+    ///         be_writer.into_inner(),
+    ///         vec![
+    ///             0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56,
+    ///             0x78, 0x90, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12,
+    ///         ]
+    ///     );
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_i128(n)?;
+    ///     assert_eq!(
+    ///         le_writer.into_inner(),
+    ///         vec![
+    ///             0x12, 0x90, 0x78, 0x56, 0x34, 0x12, 0x90, 0x78,
+    ///             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12
+    ///         ]
+    ///     );
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_i128(&mut self, n: i128) -> Result<()> {
+        self.write_u128(n as u128)
+    }
+
+    /// Writes a IEEE754 single-precision floating point number to the
+    /// underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::{self, Cursor};
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 12.5f32;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_f32(n)?;
+    ///     assert_eq!(be_writer.into_inner(), vec![0x41, 0x48, 0x00, 0x00]);
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_f32(n)?;
+    ///     assert_eq!(le_writer.into_inner(), vec![0x00, 0x00, 0x48, 0x41]);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_f32(&mut self, n: f32) -> Result<()> {
+        let bytes = match self.order {
+            ByteOrder::BE => n.to_be_bytes(),
+            ByteOrder::LE => n.to_le_bytes(),
+        };
+        self.inner.write_all(&bytes)
+    }
+
+    /// Writes a IEEE754 double-precision floating point number to the
+    /// underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This method propagates any error recieved from the internal call to
+    /// [`Write::write_all`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::{self, Cursor};
+    /// use byte_order::{ByteOrder, NumberWriter};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let n = 12.5f64;
+    ///
+    ///     let mut be_writer = NumberWriter::with_order(ByteOrder::BE, vec![]);
+    ///     be_writer.write_f64(n)?;
+    ///     assert_eq!(be_writer.into_inner(), vec![0x40, 0x29, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    ///
+    ///     let mut le_writer = NumberWriter::with_order(ByteOrder::LE, vec![]);
+    ///     le_writer.write_f64(n)?;
+    ///     assert_eq!(le_writer.into_inner(), vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x29, 0x40]);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`Write::write_all`]: Write::write_all
+    #[inline]
+    pub fn write_f64(&mut self, n: f64) -> Result<()> {
+        let bytes = match self.order {
+            ByteOrder::BE => n.to_be_bytes(),
+            ByteOrder::LE => n.to_le_bytes(),
+        };
+        self.inner.write_all(&bytes)
     }
 }

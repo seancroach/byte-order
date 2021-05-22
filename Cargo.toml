@@ -11,5 +11,5 @@ license = "MIT"
 [lib]
 name = "byte_order"
 
-[dependencies]
-docgen = "0.1.2"
+[profile.bench]
+opt-level = 3
